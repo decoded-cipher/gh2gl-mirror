@@ -1,13 +1,13 @@
 name: GH → GL Backup (staged, parallel)
 
 on:
-  workflow_dispatch:    # Manual trigger
+  workflow_dispatch:
 
 jobs:
   discover:
     runs-on: ubuntu-latest
     outputs:
-      repos: ${{ steps.out.outputs.repos }}   # JSON array of names only (keeps output small)
+      repos: ${{ steps.out.outputs.repos }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,12 +22,12 @@ jobs:
       - id: out
         run: echo "repos=$(cat repos.json)" >> $GITHUB_OUTPUT
 
-  ensure:
+  backup:
     needs: discover
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      max-parallel: 10              # throttle API calls
+      max-parallel: 25
       matrix:
         name: ${{ fromJson(needs.discover.outputs.repos) }}
     steps:
@@ -42,20 +42,6 @@ jobs:
           GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
           GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
         run: node scripts/ensure.js
-
-  mirror:
-    needs: [discover, ensure]
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 10
-      matrix:
-        name: ${{ fromJson(needs.discover.outputs.repos) }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
       - name: Mirror repo (git push --mirror) with 2x retry
         env:
           REPO_NAME: ${{ matrix.name }}
