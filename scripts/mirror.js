@@ -22,7 +22,7 @@ function run(cmd) { execSync(cmd, { stdio: "inherit" }); }
 const ghUrl = `https://x-access-token:${GH_TOKEN}@github.com/${GH_USER}/${REPO_NAME}.git`;
 const glUrl = `https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/${GITLAB_NAMESPACE}/${REPO_NAME}.git`;
 
-const work = mkdtempSync(join(tmpdir(), "mirror-one-"));
+const work = mkdtempSync(join(tmpdir(), "mirror-"));
 const bare = join(work, `${REPO_NAME}.git`);
 
 try {
