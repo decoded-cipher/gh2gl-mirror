@@ -1,27 +1,68 @@
-name: Personal GitHub → GitLab Backup (Node.js)
+name: GH → GL Backup (staged, parallel)
 
 on:
   workflow_dispatch: # manual trigger
-  schedule:
-    - cron: "0 0 * * 0" # every Sunday at midnight
+
+permissions:
+  contents: read
 
 jobs:
-  mirror:
+  discover:
     runs-on: ubuntu-latest
-    env:
-      GH_USER: ${{ github.repository_owner }}  # your GitHub username
-      GH_TOKEN: ${{ secrets.GH_PAT }}
-      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-      GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
-      GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
+    outputs:
+      repos: ${{ steps.out.outputs.repos }}   # JSON array of names only (keeps output small)
     steps:
-      - name: Checkout (scripts/)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Discover repos (all: includes forks + archived)
+        env:
+          GH_USER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: node scripts/discover.js > repos.json
+      - id: out
+        run: echo "repos=$(cat repos.json)" >> $GITHUB_OUTPUT
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
+  ensure:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10              # throttle API calls
+      matrix:
+        name: ${{ fromJson(needs.discover.outputs.repos) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Ensure GitLab project exists & force private
+        env:
+          REPO_NAME: ${{ matrix.name }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
+          GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
+        run: node scripts/ensure.js
 
-      - name: Run mirror
-        run: node scripts/mirror.js
+  mirror:
+    needs: [discover, ensure]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        name: ${{ fromJson(needs.discover.outputs.repos) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Mirror repo (git push --mirror) with 2x retry
+        env:
+          REPO_NAME: ${{ matrix.name }}
+          GH_USER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
+          GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
+        run: |
+          set -e
+          node scripts/mirror.js || (echo "retry 1…" && sleep 5 && node scripts/mirror.js) || (echo "retry 2…" && sleep 10 && node scripts/mirror.js)
