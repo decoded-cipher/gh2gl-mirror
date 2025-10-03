@@ -1,12 +1,7 @@
 name: GH → GL Backup (staged, parallel)
 
 on:
-  workflow_dispatch: # manual trigger
-  schedule:
-    - cron: "0 0 * * 0" # every Sunday at midnight
-
-# permissions:
-#   contents: read
+  workflow_dispatch:    # Manual trigger
 
 jobs:
   discover:
