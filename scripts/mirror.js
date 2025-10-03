@@ -29,12 +29,18 @@ try {
   rmSync(bare, { recursive: true, force: true });
 } catch {}
 
-console.log(`Cloning --mirror ${REPO_NAME}…`);
-run(`git clone --mirror "${ghUrl}" "${bare}"`);
+try {
+  console.log(`Cloning --mirror ${REPO_NAME}…`);
+  run(`git clone --mirror "${ghUrl}" "${bare}"`);
 
-console.log(`Pushing --mirror to GitLab…`);
-run(`git -C "${bare}" remote set-url --push origin "${glUrl}"`);
-run(`git -C "${bare}" push --mirror "${glUrl}"`);
+  console.log(`Pushing --mirror to GitLab…`);
+  run(`git -C "${bare}" remote set-url --push origin "${glUrl}"`);
+  run(`git -C "${bare}" push --mirror "${glUrl}"`);
 
-try { rmSync(work, { recursive: true, force: true }); } catch {}
-console.log("Done.");
+  console.log(`✓ Successfully mirrored ${REPO_NAME}`);
+} catch (e) {
+  console.error(`⚠ Failed to mirror ${REPO_NAME}: ${e.message}`);
+  process.exit(0); // Exit with success to continue workflow
+} finally {
+  try { rmSync(work, { recursive: true, force: true }); } catch {}
+}

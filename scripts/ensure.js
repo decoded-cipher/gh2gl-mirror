@@ -46,19 +46,26 @@ function encProjectPath() {
 }
 
 (async () => {
-  const nsId = await resolveNamespaceId();
-  const enc = encProjectPath();
+  try {
+    const nsId = await resolveNamespaceId();
+    const enc = encProjectPath();
 
-  const head = await gl(`/projects/${enc}`, { raw: true });
-  if (head.ok) {
-    // force private
-    await gl(`/projects/${enc}`, { method: "PUT", body: { visibility: "private" } }).catch(() => {});
-    process.exit(0);
+    const head = await gl(`/projects/${enc}`, { raw: true });
+    if (head.ok) {
+      // force private
+      await gl(`/projects/${enc}`, { method: "PUT", body: { visibility: "private" } }).catch(() => {});
+      console.log(`✓ Project ${REPO_NAME} exists and is private`);
+      process.exit(0);
+    }
+
+    // create private
+    await gl(`/projects`, {
+      method: "POST",
+      body: { name: REPO_NAME, namespace_id: nsId, visibility: "private" },
+    });
+    console.log(`✓ Created project ${REPO_NAME}`);
+  } catch (e) {
+    console.error(`⚠ Skipping ${REPO_NAME}: ${e.message}`);
+    process.exit(0); // Exit with success to continue workflow
   }
-
-  // create private
-  await gl(`/projects`, {
-    method: "POST",
-    body: { name: REPO_NAME, namespace_id: nsId, visibility: "private" },
-  });
-})().catch(e => { console.error(e); process.exit(1); });
+})();
