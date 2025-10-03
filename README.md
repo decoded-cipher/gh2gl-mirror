@@ -1,6 +1,6 @@
 # GitHub → GitLab Mirror (staged, parallel)
 
-[![GH → GL Backup (staged, parallel)](https://github.com/decoded-cipher/gitlab-mirror/actions/workflows/mirror.yml/badge.svg)](https://github.com/decoded-cipher/gitlab-mirror/actions/workflows/mirror.yml)
+[![GH → GL Backup (staged, parallel)](https://github.com/decoded-cipher/gh2gl-mirror/actions/workflows/mirror.yml/badge.svg)](https://github.com/decoded-cipher/gh2gl-mirror/actions/workflows/mirror.yml)
 
 
 Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **GitLab**, enforcing private visibility, with parallel jobs and retries.
