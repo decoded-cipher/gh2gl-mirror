@@ -1,5 +1,6 @@
-// Node 20+ (global fetch). Mirrors all personal GitHub repos you own (no forks, include archived)
-// to GitLab namespace with matching visibility. Pushes --mirror (branches, tags, deletions).
+// scripts/mirror.js
+// Node 20+. Mirrors all GitHub repos you own (no forks, include archived)
+// into a GitLab namespace, forcing GitLab visibility to PRIVATE for every repo.
 
 import { execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -24,9 +25,9 @@ function requireEnv(name) {
 const GH_API = "https://api.github.com";
 const GL_API = `https://${GITLAB_HOST}/api/v4`;
 
+// ---------- HTTP helpers ----------
 async function ghFetch(path, params = {}) {
   const url = new URL(`${GH_API}${path}`);
-  // Support pagination params
   if (params.query) {
     Object.entries(params.query).forEach(([k, v]) => url.searchParams.set(k, v));
   }
@@ -54,7 +55,6 @@ async function glFetch(path, opts = {}) {
     },
     body: opts.body ? JSON.stringify(opts.body) : undefined,
   });
-  // For GET existence checks we often just need status
   if (opts.raw) return res;
   if (!res.ok) {
     const text = await res.text();
@@ -63,9 +63,8 @@ async function glFetch(path, opts = {}) {
   return res.json();
 }
 
+// ---------- GitHub: list owned repos (no forks, include archived) ----------
 async function listAllOwnedRepos() {
-  // Use /users/:username/repos to list public+private owned by the user (requires token & correct visibility via affiliation)
-  // Safer: use /user/repos?affiliation=owner to ensure ownership.
   const per_page = 100;
   let page = 1;
   const out = [];
@@ -80,13 +79,13 @@ async function listAllOwnedRepos() {
       },
     });
     if (!items.length) break;
-    // Filter: owner is you, skip forks, include archived
+
     for (const r of items) {
       if (r.owner?.login === GH_USER && !r.fork) {
         out.push({
           name: r.name,
           private: !!r.private,
-          archived: !!r.archived, // included; informational
+          archived: !!r.archived, // informational only
         });
       }
     }
@@ -96,25 +95,20 @@ async function listAllOwnedRepos() {
   return out;
 }
 
+// ---------- GitLab: resolve namespace (group/user) ----------
 async function resolveGitLabNamespaceId() {
-  // Try group path first (works for groups/subgroups), then user by username
-  // groups?search= matches group name, not full path reliably; try direct /namespaces search instead
-  // Fallback sequence to be robust across cloud/self-hosted
-  // 1) /namespaces?search= (returns groups/users)
-  let ns;
+  // 1) /namespaces?search=
   try {
     const data = await glFetch(`/namespaces?search=${encodeURIComponent(GITLAB_NAMESPACE)}`);
-    ns = data.find(
+    const ns = data.find(
       (n) =>
         n.full_path?.toLowerCase() === GITLAB_NAMESPACE.toLowerCase() ||
         n.path?.toLowerCase() === GITLAB_NAMESPACE.toLowerCase()
     );
-  } catch {
-    // ignore and try next
-  }
-  if (ns?.id) return { id: ns.id, kind: ns.kind }; // kind: group/user
+    if (ns?.id) return { id: ns.id, kind: ns.kind || ns.type || "namespace" };
+  } catch {}
 
-  // 2) /groups
+  // 2) /groups?search=
   try {
     const groups = await glFetch(`/groups?search=${encodeURIComponent(GITLAB_NAMESPACE)}`);
     const g = groups.find(
@@ -134,52 +128,53 @@ async function resolveGitLabNamespaceId() {
   throw new Error(`GitLab namespace '${GITLAB_NAMESPACE}' not found`);
 }
 
+// ---------- URL helpers ----------
 function ghRepoUrl(name) {
-  // token auth via HTTPS
   return `https://x-access-token:${GH_TOKEN}@github.com/${GH_USER}/${name}.git`;
 }
 function glRepoUrl(name) {
   return `https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/${GITLAB_NAMESPACE}/${name}.git`;
 }
 function glProjectPathEncoded(name) {
-  // encode namespace/repo for path segments (GitLab expects %2F for slash)
-  return encodeURIComponent(`${GITLAB_NAMESPACE}/${name}`);
+  return encodeURIComponent(`${GITLAB_NAMESPACE}/${name}`); // encodes slash → %2F
 }
 
-async function ensureGitLabProject(nsId, repoName, visibility) {
+// ---------- GitLab: ensure project exists + force visibility private ----------
+async function ensureGitLabProject(nsId, repoName) {
   const enc = glProjectPathEncoded(repoName);
 
   // Check existence
   const head = await glFetch(`/projects/${enc}`, { raw: true });
   if (head.ok) {
-    // Ensure visibility matches
+    // Force PRIVATE visibility even if it was public
     await glFetch(`/projects/${enc}`, {
       method: "PUT",
-      body: { visibility },
+      body: { visibility: "private" },
     }).catch(() => {}); // best-effort
     return;
   }
-  // Create
+
+  // Create as PRIVATE
   await glFetch(`/projects`, {
     method: "POST",
     body: {
       name: repoName,
       namespace_id: nsId,
-      visibility,
+      visibility: "private",
     },
   });
 }
 
+// ---------- Shell helpers ----------
 function run(cmd, opts = {}) {
   return execSync(cmd, { stdio: "inherit", ...opts });
 }
 
 async function mirrorRepo(tmpDir, repo) {
-  const { name, private: isPrivate } = repo;
+  const { name } = repo;
   const gh = ghRepoUrl(name);
   const gl = glRepoUrl(name);
 
-  // Fresh bare mirror clone, then push --mirror
   const dir = join(tmpDir, `${name}.git`);
   try {
     rmSync(dir, { recursive: true, force: true });
@@ -189,6 +184,7 @@ async function mirrorRepo(tmpDir, repo) {
   run(`git -C "${dir}" push --mirror "${gl}"`);
 }
 
+// ---------- Main ----------
 (async () => {
   console.log(`→ Listing owned GitHub repos for ${GH_USER} (no forks, including archived)...`);
   const repos = await listAllOwnedRepos();
@@ -200,15 +196,14 @@ async function mirrorRepo(tmpDir, repo) {
   const tmp = mkdtempSync(join(tmpdir(), "mirror-"));
 
   for (const r of repos) {
-    const vis = r.private ? "private" : "public";
-    console.log(`\n=== ${r.name} (GitHub visibility: ${vis}${r.archived ? ", archived" : ""}) ===`);
+    console.log(`\n=== ${r.name} (forcing private on GitLab${r.archived ? ", archived" : ""}) ===`);
     try {
-      await ensureGitLabProject(ns.id, r.name, vis);
-      await mirrorRepo(tmp, r);
+      await ensureGitLabProject(ns.id, r.name);          // always private
+      await mirrorRepo(tmp, r);                           // push --mirror
       console.log(`✔ Mirrored ${r.name}`);
     } catch (e) {
       console.error(`✖ Failed ${r.name}:`, e.message);
-      // continue with next repo
+      // continue
     }
   }
 
