@@ -1,0 +1,27 @@
+name: Personal GitHub → GitLab Backup (Node.js)
+
+on:
+  workflow_dispatch: # manual trigger
+  schedule:
+    - cron: "0 0 * * 0" # every Sunday at midnight
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      GH_USER: ${{ github.repository_owner }}  # your GitHub username
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+      GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
+      GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
+    steps:
+      - name: Checkout (scripts/)
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Run mirror
+        run: node scripts/mirror.js
