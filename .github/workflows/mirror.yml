@@ -5,8 +5,8 @@ on:
   schedule:
     - cron: "0 0 * * 0" # every Sunday at midnight
 
-permissions:
-  contents: read
+# permissions:
+#   contents: read
 
 jobs:
   discover:
