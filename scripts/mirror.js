@@ -1,5 +1,5 @@
 // scripts/mirror.js
-// Node 20+. Mirrors all GitHub repos you own (no forks, include archived)
+// Node 20+. Mirrors ALL GitHub repos you own (includes forks + archived)
 // into a GitLab namespace, forcing GitLab visibility to PRIVATE for every repo.
 
 import { execSync } from "node:child_process";
@@ -63,7 +63,7 @@ async function glFetch(path, opts = {}) {
   return res.json();
 }
 
-// ---------- GitHub: list owned repos (no forks, include archived) ----------
+// ---------- GitHub: list ALL owned repos (include forks + archived) ----------
 async function listAllOwnedRepos() {
   const per_page = 100;
   let page = 1;
@@ -81,11 +81,12 @@ async function listAllOwnedRepos() {
     if (!items.length) break;
 
     for (const r of items) {
-      if (r.owner?.login === GH_USER && !r.fork) {
+      if (r.owner?.login === GH_USER) { // include forks
         out.push({
           name: r.name,
           private: !!r.private,
-          archived: !!r.archived, // informational only
+          archived: !!r.archived,
+          fork: !!r.fork,
         });
       }
     }
@@ -186,7 +187,7 @@ async function mirrorRepo(tmpDir, repo) {
 
 // ---------- Main ----------
 (async () => {
-  console.log(`→ Listing owned GitHub repos for ${GH_USER} (no forks, including archived)...`);
+  console.log(`→ Listing ALL owned GitHub repos for ${GH_USER} (includes forks + archived)`);
   const repos = await listAllOwnedRepos();
   console.log(`Found ${repos.length} repos.`);
 
@@ -196,7 +197,11 @@ async function mirrorRepo(tmpDir, repo) {
   const tmp = mkdtempSync(join(tmpdir(), "mirror-"));
 
   for (const r of repos) {
-    console.log(`\n=== ${r.name} (forcing private on GitLab${r.archived ? ", archived" : ""}) ===`);
+    console.log(
+      `\n=== ${r.name} (forcing private on GitLab${r.archived ? ", archived" : ""}${
+        r.fork ? ", fork" : ""
+      }) ===`
+    );
     try {
       await ensureGitLabProject(ns.id, r.name);          // always private
       await mirrorRepo(tmp, r);                           // push --mirror
