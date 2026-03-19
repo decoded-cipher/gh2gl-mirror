@@ -178,7 +178,7 @@ function formatRepoList(repos, { bulleted = false, cap = 20 } = {}) {
     fields,
     footer: {
       text: GITHUB_REPOSITORY,
-      icon_url: "https://github.githubassets.com/favicons/favicon.png",
+      icon_url: "https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png",
     },
     timestamp: new Date().toISOString(),
   };

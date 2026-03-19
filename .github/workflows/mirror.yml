@@ -58,7 +58,7 @@ jobs:
           node scripts/mirror.js || (echo "retry 1…" && sleep 5 && node scripts/mirror.js) || (echo "retry 2…" && sleep 10 && node scripts/mirror.js)
       - name: Upload mirror result
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: mirror-result-${{ matrix.name }}
           path: mirror-results/
@@ -75,7 +75,7 @@ jobs:
         with:
           node-version: 20
       - name: Download mirror results
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           pattern: mirror-result-*
           path: mirror-results/
