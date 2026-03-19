@@ -52,9 +52,18 @@ jobs:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
           GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
+          RESULTS_DIR: ${{ github.workspace }}/mirror-results
         run: |
           set -e
           node scripts/mirror.js || (echo "retry 1…" && sleep 5 && node scripts/mirror.js) || (echo "retry 2…" && sleep 10 && node scripts/mirror.js)
+      - name: Upload mirror result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mirror-result-${{ matrix.name }}
+          path: mirror-results/
+          retention-days: 1
+          if-no-files-found: ignore
 
   notify:
     needs: [discover, backup]
@@ -65,11 +74,21 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: 20
+      - name: Download mirror results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: mirror-result-*
+          path: mirror-results/
+          merge-multiple: true
+        continue-on-error: true
       - name: Send Discord notification
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           WORKFLOW_STATUS: ${{ (needs.discover.result == 'success' && needs.backup.result == 'success') && 'success' || 'failure' }}
           BACKUP_RESULT: ${{ needs.backup.result }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          CRON_SCHEDULE: '0 0 * * 1'
+          RESULTS_DIR: ${{ github.workspace }}/mirror-results
         run: |
           if [ -n '${{ needs.discover.outputs.repos }}' ] && [ '${{ needs.discover.outputs.repos }}' != '[]' ]; then
             REPO_COUNT=$(echo '${{ needs.discover.outputs.repos }}' | node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).length))")
