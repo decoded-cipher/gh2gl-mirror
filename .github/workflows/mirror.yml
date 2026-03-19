@@ -1,6 +1,8 @@
 name: GH → GL Backup (staged, parallel)
 
 on:
+  schedule:
+    - cron: '0 0 * * 1'
   workflow_dispatch:
 
 jobs:
