@@ -55,3 +55,26 @@ jobs:
         run: |
           set -e
           node scripts/mirror.js || (echo "retry 1…" && sleep 5 && node scripts/mirror.js) || (echo "retry 2…" && sleep 10 && node scripts/mirror.js)
+
+  notify:
+    needs: [discover, backup]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          WORKFLOW_STATUS: ${{ (needs.discover.result == 'success' && needs.backup.result == 'success') && 'success' || 'failure' }}
+          BACKUP_RESULT: ${{ needs.backup.result }}
+        run: |
+          if [ -n '${{ needs.discover.outputs.repos }}' ] && [ '${{ needs.discover.outputs.repos }}' != '[]' ]; then
+            REPO_COUNT=$(echo '${{ needs.discover.outputs.repos }}' | node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).length))")
+          else
+            REPO_COUNT=0
+          fi
+          export REPO_COUNT
+          node scripts/notify.js
