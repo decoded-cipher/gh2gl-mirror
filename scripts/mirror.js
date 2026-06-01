@@ -21,8 +21,17 @@ function run(cmd, opts = {}) {
   return execSync(cmd, { encoding: "utf8", ...opts });
 }
 
+function glSlug(name) {
+  return name
+    .replace(/[^A-Za-z0-9_.-]/g, "-")
+    .replace(/^[-_.]+/, "")
+    .replace(/(?:\.git|\.atom)$/i, "")
+    .replace(/[-_.]+$/, "") || "repo";
+}
+
+const glPath = glSlug(REPO_NAME);
 const ghUrl = `https://x-access-token:${GH_TOKEN}@github.com/${GH_USER}/${REPO_NAME}.git`;
-const glUrl = `https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/${GITLAB_NAMESPACE}/${REPO_NAME}.git`;
+const glUrl = `https://oauth2:${GITLAB_TOKEN}@${GITLAB_HOST}/${GITLAB_NAMESPACE}/${glPath}.git`;
 
 const work = mkdtempSync(join(tmpdir(), "mirror-"));
 const bare = join(work, `${REPO_NAME}.git`);
@@ -56,7 +65,9 @@ try {
     ? `— ${REPO_NAME} (no changes)`
     : `✓ ${REPO_NAME} (updated)`);
 } catch (e) {
+  const detail = (e.stdout || e.stderr || "").toString().trim();
   console.error(`⚠ Failed to mirror ${REPO_NAME}: ${e.message}`);
+  if (detail) console.error(detail);
   writeResult("failed");
   process.exit(0);
 } finally {

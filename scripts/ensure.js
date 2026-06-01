@@ -6,6 +6,16 @@ if (!REPO_NAME || !GITLAB_TOKEN || !GITLAB_HOST || !GITLAB_NAMESPACE) {
 }
 const GL_API = `https://${GITLAB_HOST}/api/v4`;
 
+// Keep in sync with glSlug in mirror.js.
+function glSlug(name) {
+  return name
+    .replace(/[^A-Za-z0-9_.-]/g, "-")
+    .replace(/^[-_.]+/, "")
+    .replace(/(?:\.git|\.atom)$/i, "")
+    .replace(/[-_.]+$/, "") || "repo";
+}
+const REPO_PATH = glSlug(REPO_NAME);
+
 async function gl(path, { method = "GET", body, raw = false } = {}) {
   const res = await fetch(GL_API + path, {
     method,
@@ -42,7 +52,7 @@ async function resolveNamespaceId() {
 }
 
 function encProjectPath() {
-  return encodeURIComponent(`${GITLAB_NAMESPACE}/${REPO_NAME}`);
+  return encodeURIComponent(`${GITLAB_NAMESPACE}/${REPO_PATH}`);
 }
 
 (async () => {
@@ -61,7 +71,7 @@ function encProjectPath() {
     // create private
     await gl(`/projects`, {
       method: "POST",
-      body: { name: REPO_NAME, namespace_id: nsId, visibility: "private" },
+      body: { name: REPO_NAME, path: REPO_PATH, namespace_id: nsId, visibility: "private" },
     });
     console.log(`✓ Created project ${REPO_NAME}`);
   } catch (e) {
