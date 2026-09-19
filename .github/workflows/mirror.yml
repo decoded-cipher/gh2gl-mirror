@@ -5,65 +5,68 @@ on:
     - cron: '0 0 * * 1'
   workflow_dispatch:
 
+concurrency:
+  group: gh2gl-mirror
+  cancel-in-progress: false
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   discover:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       repos: ${{ steps.out.outputs.repos }}
+      batches: ${{ steps.out.outputs.batches }}
+      batch_count: ${{ steps.out.outputs.batch_count }}
+      repo_count: ${{ steps.out.outputs.repo_count }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          fetch-depth: 1
+          sparse-checkout: scripts
       - name: Discover repos (all includes forks + archived)
+        id: out
         env:
           GH_USER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          node scripts/discover.js > repos.json
-      - id: out
-        run: echo "repos=$(cat repos.json)" >> $GITHUB_OUTPUT
+          MAX_BATCHES: '25'
+        run: node scripts/discover.js
 
   backup:
     needs: discover
+    if: ${{ needs.discover.result == 'success' && needs.discover.outputs.repo_count != '0' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 25
       matrix:
-        name: ${{ fromJson(needs.discover.outputs.repos) }}
+        batch: ${{ fromJson(needs.discover.outputs.batches) }}
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
         with:
-          node-version: 20
-      - name: Ensure GitLab project exists & force private
+          fetch-depth: 1
+          sparse-checkout: scripts
+      - name: Ensure GitLab projects & mirror batch
         env:
-          REPO_NAME: ${{ matrix.name }}
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
-          GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
-          GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
-        run: node scripts/ensure.js
-      - name: Mirror repo (git push --mirror) with 2x retry
-        env:
-          REPO_NAME: ${{ matrix.name }}
+          REPOS_JSON: ${{ needs.discover.outputs.repos }}
+          BATCH_INDEX: ${{ matrix.batch }}
+          BATCH_COUNT: ${{ needs.discover.outputs.batch_count }}
+          CONCURRENCY: '3'
           GH_USER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
           GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
           RESULTS_DIR: ${{ github.workspace }}/mirror-results
-        run: |
-          set -e
-          node scripts/mirror.js || (echo "retry 1…" && sleep 5 && node scripts/mirror.js) || (echo "retry 2…" && sleep 10 && node scripts/mirror.js)
-      - name: Upload mirror result
+        run: node scripts/backup.js
+      - name: Upload batch results
         if: always()
         uses: actions/upload-artifact@v5
         with:
-          name: mirror-result-${{ matrix.name }}
+          name: mirror-results-${{ matrix.batch }}
           path: mirror-results/
           retention-days: 1
           if-no-files-found: ignore
@@ -72,15 +75,16 @@ jobs:
     needs: [discover, backup]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          fetch-depth: 1
+          sparse-checkout: scripts
       - name: Download mirror results
         uses: actions/download-artifact@v5
         with:
-          pattern: mirror-result-*
+          pattern: mirror-results-*
           path: mirror-results/
           merge-multiple: true
         continue-on-error: true
@@ -89,14 +93,6 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           WORKFLOW_STATUS: ${{ (needs.discover.result == 'success' && needs.backup.result == 'success') && 'success' || 'failure' }}
           BACKUP_RESULT: ${{ needs.backup.result }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-          CRON_SCHEDULE: '0 0 * * 1'
+          REPO_COUNT: ${{ needs.discover.outputs.repo_count }}
           RESULTS_DIR: ${{ github.workspace }}/mirror-results
-        run: |
-          if [ -n '${{ needs.discover.outputs.repos }}' ] && [ '${{ needs.discover.outputs.repos }}' != '[]' ]; then
-            REPO_COUNT=$(echo '${{ needs.discover.outputs.repos }}' | node -e "process.stdout.write(String(JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).length))")
-          else
-            REPO_COUNT=0
-          fi
-          export REPO_COUNT
-          node scripts/notify.js
+        run: node scripts/notify.js

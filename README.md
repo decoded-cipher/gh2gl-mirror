@@ -8,7 +8,8 @@ Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **Git
 - Includes **public + private + archived** repositories
 - Includes **forks** by default (see [Skip forks](#skip-forks) to exclude them)
 - Forces **GitLab visibility = private** for every mirrored project
-- Parallel mirroring (up to 25 concurrent jobs) with 2x retry on failure
+- Parallel mirroring in batched jobs (25 concurrent by default) with 3x retry and exponential backoff
+- Skips the clone entirely when GitHub and GitLab refs already match
 - Discord webhook notifications with per-repo status breakdown
 - Zero per-repo config — run it from a single backup repo
 
@@ -18,16 +19,16 @@ Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **Git
 ```
 .github/workflows/mirror.yml   # Workflow with 3 jobs: discover → backup → notify
 scripts/
-  discover.js                   # Lists all repos you OWN (includes forks + archived) → JSON array of names
-  ensure.js                     # Ensures GitLab project exists under your namespace; forces visibility=private
-  mirror.js                     # Mirrors a single repo (git clone --mirror → git push --mirror)
+  discover.js                   # Lists all repos you OWN (includes forks + archived) → matrix outputs
+  backup.js                     # Ensures GitLab projects exist and mirrors one batch of repos
+  lib.js                        # Shared helpers (git, ref comparison, slugs, retry, concurrency)
   notify.js                     # Sends a Discord notification with run summary (updated/unchanged/failed counts)
 ```
 
 
 ## Requirements
 
-- **Node.js 20** (set up automatically by the workflow)
+- **Node.js 20+** — provided by the runner image; the workflow installs nothing
 - **Secrets** (in the backup repo → *Settings → Secrets and variables → Actions*):
 
 | Secret | Purpose |
@@ -63,26 +64,27 @@ on:
 ### Job 1 — `discover`
 - Runs `scripts/discover.js` using your GitHub token
 - Collects **all repos you own** (public, private, archived — and forks by default)
-- Emits a JSON array of repo names to the next job
+- Emits the repo list plus a batch index list for the next job's matrix
 
-### Job 2 — `backup` (matrix)
-For each repo name (matrix, `max-parallel: 25`, `fail-fast: false`):
-1. **Ensure** — `scripts/ensure.js`
-   - Resolves your GitLab **namespace** (user or group)
-   - Creates the project if it doesn't exist and **forces visibility to `private`**
-2. **Mirror** — `scripts/mirror.js`
-   - `git clone --mirror` from GitHub → `git push --mirror` to GitLab
-   - Writes a per-repo result file (`updated` / `unchanged` / `failed`) for the notify step
-   - Step has **2x retry** with backoff to handle transient failures
-3. **Upload** — per-repo result files are uploaded as artifacts for the notify job
+### Job 2 — `backup` (matrix over batches)
+The matrix runs one job per **batch** (25 by default), not one per repo, which keeps the run
+under GitHub's hard limit of **256 matrix jobs per workflow run**. Each job takes every 25th repo
+from the list and processes `CONCURRENCY` of them at a time via `scripts/backup.js`:
+1. **Ensure** — resolves your GitLab **namespace** once per job, creates the project if missing,
+   and sets visibility to `private` only when it isn't already
+2. **Compare** — `git ls-remote` on both sides; when `refs/heads`, `refs/tags` and `refs/notes`
+   already match, the clone is skipped and the repo is recorded as `unchanged`
+3. **Mirror** — otherwise `git clone --mirror` from GitHub → `git push --mirror` to GitLab
+4. Each repo gets **3 attempts** with exponential backoff, then a result file
+   (`updated` / `unchanged` / `failed`)
+5. **Upload** — one result artifact per batch for the notify job
 
 ### Job 3 — `notify`
-- Downloads all mirror result artifacts
+- Downloads all batch result artifacts
 - Runs `scripts/notify.js` to send a Discord embed with:
   - Overall status (success / failure)
   - Updated, unchanged, and failed repo counts
-  - Links to updated and failed repos
-  - Run duration and next scheduled run time
+  - Every updated and failed repo name, packed to fit Discord's embed limits
 
 
 ## Customization
@@ -99,21 +101,25 @@ if (r.owner?.login === GH_USER && !r.fork) names.push(r.name);
 ```
 
 ### Keep public repos public on GitLab
-Currently `ensure.js` forces every project to `private`. To mirror visibility from GitHub (public → public, private → private), pass visibility from `discover.js` through the matrix and update `ensure.js` to set it accordingly.
+Currently `backup.js` forces every project to `private`. To mirror visibility from GitHub (public → public, private → private), carry each repo's visibility from `discover.js` through `REPOS_JSON` and use it in `ensureProject()`.
 
 ### Tune parallelism
-In the `backup` job strategy:
+Three knobs, from coarsest to finest:
 ```yaml
 strategy:
-  max-parallel: 25
+  max-parallel: 25      # batch jobs running at once
+env:
+  MAX_BATCHES: '25'     # batches discover.js splits the repo list into (discover job)
+  CONCURRENCY: '3'      # repos mirrored simultaneously inside one batch job (backup job)
 ```
-Lower this if you hit rate limits; raise it for speed if your runner and network allow.
+Lower these if you hit rate limits; raise them for speed if your runner and network allow.
+Total repos in flight is roughly `max-parallel × CONCURRENCY`.
 
 
 ## Git LFS note
 
 This flow uses `git clone --mirror` and `git push --mirror`, which mirror refs and **LFS pointers only**.
-If you need to back up **LFS objects** as well, augment `mirror.js` to install `git-lfs` and run:
+If you need to back up **LFS objects** as well, augment `backup.js` to install `git-lfs` and run:
 ```bash
 git lfs install
 git lfs fetch --all
