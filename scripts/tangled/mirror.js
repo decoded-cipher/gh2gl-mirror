@@ -57,7 +57,6 @@ function recordMeta(repo) {
   return {
     description: description ? clip(description, DESCRIPTION_LIMIT) : undefined,
     website: homepage ? (/^https?:\/\//i.test(homepage) ? homepage : `https://${homepage}`) : undefined,
-    topics: repo.topics?.length ? repo.topics : undefined,
   };
 }
 

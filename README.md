@@ -11,7 +11,7 @@ Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **[Gi
 - Includes **forks** by default (see [Skip forks](#skip-forks) to exclude them)
 - Parallel mirroring in batched jobs (25 concurrent by default) with 3x retry and exponential backoff
 - Skips the clone entirely when GitHub and the destination's refs already match
-- Keeps each repo's **description, website and topics** in sync with GitHub
+- Keeps each repo's **description and website** in sync with GitHub
 - Discord webhook notifications with per-repo status breakdown
 - Zero per-repo config — run it from a single backup repo
 
@@ -114,8 +114,8 @@ Both workflows have the same three jobs.
 The matrix runs one job per **batch** (25 by default), not one per repo, which keeps the run
 under GitHub's hard limit of **256 matrix jobs per workflow run**. Each job takes every 25th repo
 from the list and processes `CONCURRENCY` of them at a time via `scripts/<gitlab|tangled>/mirror.js`:
-1. **Ensure** — creates the destination repo if missing, and updates its description, website and
-   topics only when they differ from GitHub
+1. **Ensure** — creates the destination repo if missing, and updates its description and website
+   only when they differ from GitHub
    - **GitLab**: resolves your **namespace** once per job, creates the project, and sets visibility
      to `private` only when it isn't already. GitLab has no website field, so the GitHub homepage is
      appended to the description (`description · https://…`)

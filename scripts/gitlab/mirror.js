@@ -64,27 +64,19 @@ const namespaceId = () => (namespacePromise ??= resolveNamespaceId().catch((err)
 }));
 
 // GitLab has no website field, so the GitHub homepage rides along in the description.
-function projectMeta(repo) {
-  return {
-    description: [repo.description, repo.homepage].filter(Boolean).join(" · "),
-    topics: repo.topics ?? [],
-  };
-}
-
-const sameTopics = (a = [], b = []) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+const projectDescription = (repo) => [repo.description, repo.homepage].filter(Boolean).join(" · ");
 
 async function ensureProject(repo, log) {
   const path = glSlug(repo.name);
   const enc = encodeURIComponent(`${GITLAB_NAMESPACE}/${path}`);
   const res = await gl(`/projects/${enc}`, { raw: true });
-  const meta = projectMeta(repo);
+  const description = projectDescription(repo);
 
   if (res.ok) {
     const project = await res.json();
     const changes = {};
     if (project.visibility !== "private") changes.visibility = "private";
-    if ((project.description ?? "") !== meta.description) changes.description = meta.description;
-    if (!sameTopics(project.topics, meta.topics)) changes.topics = meta.topics;
+    if ((project.description ?? "") !== description) changes.description = description;
     if (Object.keys(changes).length) {
       await gl(`/projects/${enc}`, { method: "PUT", body: changes });
       log(`updated ${Object.keys(changes).join(", ")}`);
@@ -95,7 +87,7 @@ async function ensureProject(repo, log) {
 
   await gl("/projects", {
     method: "POST",
-    body: { name: repo.name, path, namespace_id: await namespaceId(), visibility: "private", ...meta },
+    body: { name: repo.name, path, namespace_id: await namespaceId(), visibility: "private", description },
   });
   log("created project");
   return path;

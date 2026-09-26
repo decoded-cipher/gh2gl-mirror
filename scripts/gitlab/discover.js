@@ -37,7 +37,7 @@ async function gh(path, query = {}) {
     if (list.length === 0) break;
     for (const r of list) {
       if (r.owner?.login !== GH_USER) continue;
-      repos.push({ name: r.name, description: r.description, homepage: r.homepage, topics: r.topics });
+      repos.push({ name: r.name, description: r.description, homepage: r.homepage });
     }
     if (list.length < per_page) break;
     page++;
