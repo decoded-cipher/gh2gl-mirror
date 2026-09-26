@@ -1,0 +1,102 @@
+name: GH → Tangled Backup (staged, parallel)
+
+on:
+  # Runs after the GitLab backup finishes, whether it passed or failed.
+  workflow_run:
+    workflows: ['GH → GL Backup (staged, parallel)']
+    types: [completed]
+  workflow_dispatch:
+
+concurrency:
+  group: gh2tangled-mirror
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  discover:
+    if: ${{ vars.TANGLED_HANDLE != '' && github.event.workflow_run.conclusion != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      repos: ${{ steps.out.outputs.repos }}
+      batches: ${{ steps.out.outputs.batches }}
+      batch_count: ${{ steps.out.outputs.batch_count }}
+      repo_count: ${{ steps.out.outputs.repo_count }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts
+      - name: Discover public repos (includes forks + archived)
+        id: out
+        env:
+          GH_USER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          MAX_BATCHES: '25'
+        run: node scripts/tangled/discover.js
+
+  mirror:
+    needs: discover
+    if: ${{ needs.discover.result == 'success' && needs.discover.outputs.repo_count != '0' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 25
+      matrix:
+        batch: ${{ fromJson(needs.discover.outputs.batches) }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts
+      - name: Ensure Tangled repos & mirror batch
+        env:
+          REPOS_JSON: ${{ needs.discover.outputs.repos }}
+          BATCH_INDEX: ${{ matrix.batch }}
+          BATCH_COUNT: ${{ needs.discover.outputs.batch_count }}
+          CONCURRENCY: '3'
+          GH_USER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+          TANGLED_HANDLE: ${{ vars.TANGLED_HANDLE }}
+          TANGLED_KNOT: ${{ vars.TANGLED_KNOT }}
+          TANGLED_APP_PASSWORD: ${{ secrets.TANGLED_APP_PASSWORD }}
+          TANGLED_SSH_KEY: ${{ secrets.TANGLED_SSH_KEY }}
+          RESULTS_DIR: ${{ github.workspace }}/tangled-results
+        run: node scripts/tangled/mirror.js
+      - name: Upload batch results
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: tangled-results-${{ matrix.batch }}
+          path: tangled-results/
+          retention-days: 1
+          if-no-files-found: ignore
+
+  notify:
+    needs: [discover, mirror]
+    if: ${{ always() && needs.discover.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          sparse-checkout: scripts
+      - name: Download Tangled results
+        uses: actions/download-artifact@v5
+        with:
+          pattern: tangled-results-*
+          path: tangled-results/
+          merge-multiple: true
+        continue-on-error: true
+      - name: Send Discord notification
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCOVER_RESULT: ${{ needs.discover.result }}
+          MIRROR_RESULT: ${{ needs.mirror.result }}
+          REPO_COUNT: ${{ needs.discover.outputs.repo_count }}
+          RESULTS_DIR: ${{ github.workspace }}/tangled-results
+        run: node scripts/tangled/notify.js
