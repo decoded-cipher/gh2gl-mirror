@@ -38,7 +38,10 @@ async function gh(path, query = {}) {
     });
     if (list.length === 0) break;
     for (const r of list) {
-      if (r.owner?.login === GH_USER && !r.private) repos.push({ name: r.name, branch: r.default_branch });
+      if (r.owner?.login !== GH_USER || r.private) continue;
+      repos.push({
+        name: r.name, branch: r.default_branch, description: r.description, homepage: r.homepage, topics: r.topics,
+      });
     }
     if (list.length < per_page) break;
     page++;

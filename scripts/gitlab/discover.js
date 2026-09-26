@@ -25,7 +25,7 @@ async function gh(path, query = {}) {
 
 (async () => {
   const per_page = 100;
-  let page = 1, names = [];
+  let page = 1, repos = [];
   for (;;) {
     const list = await gh("/user/repos", {
       affiliation: "owner",
@@ -36,21 +36,22 @@ async function gh(path, query = {}) {
     });
     if (list.length === 0) break;
     for (const r of list) {
-      if (r.owner?.login === GH_USER) names.push(r.name);
+      if (r.owner?.login !== GH_USER) continue;
+      repos.push({ name: r.name, description: r.description, homepage: r.homepage, topics: r.topics });
     }
     if (list.length < per_page) break;
     page++;
   }
 
-  const batchCount = Math.max(1, Math.min(Number(MAX_BATCHES) || 25, names.length));
+  const batchCount = Math.max(1, Math.min(Number(MAX_BATCHES) || 25, repos.length));
   const outputs = {
-    repos: JSON.stringify(names),
+    repos: JSON.stringify(repos),
     batches: JSON.stringify(Array.from({ length: batchCount }, (_, i) => i)),
     batch_count: String(batchCount),
-    repo_count: String(names.length),
+    repo_count: String(repos.length),
   };
 
   const rendered = Object.entries(outputs).map(([k, v]) => `${k}=${v}`).join("\n");
   if (GITHUB_OUTPUT) appendFileSync(GITHUB_OUTPUT, `${rendered}\n`);
-  console.log(`${names.length} repos across ${batchCount} batches`);
+  console.log(`${repos.length} repos across ${batchCount} batches`);
 })().catch(e => { console.error(e); process.exit(1); });

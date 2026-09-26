@@ -11,6 +11,7 @@ Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **[Gi
 - Includes **forks** by default (see [Skip forks](#skip-forks) to exclude them)
 - Parallel mirroring in batched jobs (25 concurrent by default) with 3x retry and exponential backoff
 - Skips the clone entirely when GitHub and the destination's refs already match
+- Keeps each repo's **description, website and topics** in sync with GitHub
 - Discord webhook notifications with per-repo status breakdown
 - Zero per-repo config — run it from a single backup repo
 
@@ -113,11 +114,14 @@ Both workflows have the same three jobs.
 The matrix runs one job per **batch** (25 by default), not one per repo, which keeps the run
 under GitHub's hard limit of **256 matrix jobs per workflow run**. Each job takes every 25th repo
 from the list and processes `CONCURRENCY` of them at a time via `scripts/<gitlab|tangled>/mirror.js`:
-1. **Ensure** — creates the destination repo if missing
+1. **Ensure** — creates the destination repo if missing, and updates its description, website and
+   topics only when they differ from GitHub
    - **GitLab**: resolves your **namespace** once per job, creates the project, and sets visibility
-     to `private` only when it isn't already
+     to `private` only when it isn't already. GitLab has no website field, so the GitHub homepage is
+     appended to the description (`description · https://…`)
    - **Tangled**: checks your PDS for the `sh.tangled.repo` record; if missing, creates the repo on
-     the knot and writes the record (so runs where every repo already exists never log in)
+     the knot and writes the record, otherwise updates it in place. Descriptions over Tangled's
+     140-character limit are trimmed with `…`. Runs where nothing changed never log in
 2. **Compare** — `git ls-remote` on both sides; when `refs/heads`, `refs/tags` and `refs/notes`
    already match, the clone is skipped and the repo is recorded as `unchanged`
 3. **Mirror** — otherwise `git clone --mirror` from GitHub, then
@@ -139,15 +143,15 @@ from the list and processes `CONCURRENCY` of them at a time via `scripts/<gitlab
 ## Customization
 
 ### Skip forks
-Both `discover.js` scripts **include forks** by default. To exclude them, add `&& !r.fork` to the
+Both `discover.js` scripts **include forks** by default. To exclude them, add `|| r.fork` to the
 owner check in `scripts/gitlab/discover.js` and/or `scripts/tangled/discover.js`:
 
 ```js
 // Before (includes forks):
-if (r.owner?.login === GH_USER) names.push(r.name);
+if (r.owner?.login !== GH_USER) continue;
 
 // After (skips forks):
-if (r.owner?.login === GH_USER && !r.fork) names.push(r.name);
+if (r.owner?.login !== GH_USER || r.fork) continue;
 ```
 
 ### Keep public repos public on GitLab

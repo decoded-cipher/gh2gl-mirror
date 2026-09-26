@@ -42,6 +42,27 @@ const REFSPECS = ["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+re
 // Tangled lowercases the record key and rejects "..".
 const tangledSlug = (name) => glSlug(name).replace(/\.{2,}/g, ".").toLowerCase();
 
+const DESCRIPTION_LIMIT = 140; // graphemes, per the sh.tangled.repo lexicon
+const segmenter = new Intl.Segmenter();
+
+function clip(text, max) {
+  const graphemes = Array.from(segmenter.segment(text), (s) => s.segment);
+  return graphemes.length <= max ? text : `${graphemes.slice(0, max - 1).join("").trimEnd()}…`;
+}
+
+// Undefined fields are dropped by JSON.stringify, which clears them on the record.
+function recordMeta(repo) {
+  const description = repo.description?.trim();
+  const homepage = repo.homepage?.trim();
+  return {
+    description: description ? clip(description, DESCRIPTION_LIMIT) : undefined,
+    website: homepage ? (/^https?:\/\//i.test(homepage) ? homepage : `https://${homepage}`) : undefined,
+    topics: repo.topics?.length ? repo.topics : undefined,
+  };
+}
+
+const changedKeys = (value, meta) => Object.keys(meta).filter((k) => JSON.stringify(value[k]) !== JSON.stringify(meta[k]));
+
 // Memoizes an async lookup, but forgets a failure so the next caller retries it.
 function lazy(fn) {
   let promise;
@@ -109,7 +130,7 @@ const identity = lazy(async () => {
   return { did, pds: await resolvePds(did) };
 });
 
-// Only needed to create repos, so a run where every repo already exists never logs in.
+// Only needed to create or update repos, so a run where nothing changed never logs in.
 const session = lazy(async () => {
   const { did, pds } = await identity();
   const { accessJwt } = await xrpc(pds, "com.atproto.server.createSession", {
@@ -123,12 +144,32 @@ async function ensureRepo(repo, log) {
   const rkey = tangledSlug(repo.name);
   const url = `git@${SSH_HOST}:${TANGLED_HANDLE}/${rkey}`;
   const { did, pds } = await identity();
+  const meta = recordMeta(repo);
 
+  let existing;
   try {
-    await xrpc(pds, "com.atproto.repo.getRecord", { query: { repo: did, collection: REPO_NSID, rkey } });
-    return url;
+    existing = await xrpc(pds, "com.atproto.repo.getRecord", { query: { repo: did, collection: REPO_NSID, rkey } });
   } catch (err) {
     if (err.code !== "RecordNotFound") throw err;
+  }
+
+  if (existing) {
+    const changed = changedKeys(existing.value, meta);
+    if (changed.length) {
+      // Merged onto the stored record so fields set elsewhere (labels, spindle, ...) survive.
+      await xrpc(pds, "com.atproto.repo.putRecord", {
+        token: await session(),
+        body: {
+          repo: did,
+          collection: REPO_NSID,
+          rkey,
+          record: { ...existing.value, ...meta },
+          swapRecord: existing.cid,
+        },
+      });
+      log(`updated ${changed.join(", ")}`);
+    }
+    return url;
   }
 
   const accessJwt = await session();
@@ -149,7 +190,7 @@ async function ensureRepo(repo, log) {
       repo: did,
       collection: REPO_NSID,
       rkey,
-      record: { $type: REPO_NSID, knot: KNOT, repoDid, createdAt: new Date().toISOString() },
+      record: { $type: REPO_NSID, knot: KNOT, repoDid, createdAt: new Date().toISOString(), ...meta },
     },
   });
   log("created repo");

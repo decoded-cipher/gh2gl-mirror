@@ -63,16 +63,31 @@ const namespaceId = () => (namespacePromise ??= resolveNamespaceId().catch((err)
   throw err;
 }));
 
+// GitLab has no website field, so the GitHub homepage rides along in the description.
+function projectMeta(repo) {
+  return {
+    description: [repo.description, repo.homepage].filter(Boolean).join(" · "),
+    topics: repo.topics ?? [],
+  };
+}
+
+const sameTopics = (a = [], b = []) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
 async function ensureProject(repo, log) {
-  const path = glSlug(repo);
+  const path = glSlug(repo.name);
   const enc = encodeURIComponent(`${GITLAB_NAMESPACE}/${path}`);
   const res = await gl(`/projects/${enc}`, { raw: true });
+  const meta = projectMeta(repo);
 
   if (res.ok) {
     const project = await res.json();
-    if (project.visibility !== "private") {
-      await gl(`/projects/${enc}`, { method: "PUT", body: { visibility: "private" } });
-      log("forced visibility to private");
+    const changes = {};
+    if (project.visibility !== "private") changes.visibility = "private";
+    if ((project.description ?? "") !== meta.description) changes.description = meta.description;
+    if (!sameTopics(project.topics, meta.topics)) changes.topics = meta.topics;
+    if (Object.keys(changes).length) {
+      await gl(`/projects/${enc}`, { method: "PUT", body: changes });
+      log(`updated ${Object.keys(changes).join(", ")}`);
     }
     return path;
   }
@@ -80,7 +95,7 @@ async function ensureProject(repo, log) {
 
   await gl("/projects", {
     method: "POST",
-    body: { name: repo, path, namespace_id: await namespaceId(), visibility: "private" },
+    body: { name: repo.name, path, namespace_id: await namespaceId(), visibility: "private", ...meta },
   });
   log("created project");
   return path;
@@ -126,15 +141,15 @@ async function handle(repo) {
     const glPath = await withRetry(() => ensureProject(repo, log), {
       onRetry: (n, err) => log(`ensure attempt ${n} failed: ${redact(err.message)}`),
     });
-    status = await withRetry(() => mirror(repo, glPath, log), {
+    status = await withRetry(() => mirror(repo.name, glPath, log), {
       onRetry: (n, err) => log(`mirror attempt ${n} failed: ${redact(err.message)}`),
     });
   } catch (err) {
     log(redact(err.message));
   }
 
-  writeResult(repo, status);
-  console.log(`::group::${ICON[status]} ${repo} (${status})`);
+  writeResult(repo.name, status);
+  console.log(`::group::${ICON[status]} ${repo.name} (${status})`);
   for (const line of lines) console.log(line);
   console.log("::endgroup::");
   return status;
