@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   git, glSlug, pool, redact, registerSecrets, remoteRefs, sameRefs, selectBatch, withRetry,
-} from "./lib.js";
+} from "../lib.js";
 
 const {
   REPOS_JSON,

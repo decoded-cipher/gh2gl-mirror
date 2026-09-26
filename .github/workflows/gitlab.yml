@@ -32,7 +32,7 @@ jobs:
           GH_USER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GH_PAT }}
           MAX_BATCHES: '25'
-        run: node scripts/discover.js
+        run: node scripts/gitlab/discover.js
 
   backup:
     needs: discover
@@ -61,7 +61,7 @@ jobs:
           GITLAB_HOST: ${{ secrets.GITLAB_HOST }}
           GITLAB_NAMESPACE: ${{ secrets.GITLAB_NAMESPACE }}
           RESULTS_DIR: ${{ github.workspace }}/mirror-results
-        run: node scripts/backup.js
+        run: node scripts/gitlab/mirror.js
       - name: Upload batch results
         if: always()
         uses: actions/upload-artifact@v5
@@ -95,4 +95,4 @@ jobs:
           BACKUP_RESULT: ${{ needs.backup.result }}
           REPO_COUNT: ${{ needs.discover.outputs.repo_count }}
           RESULTS_DIR: ${{ github.workspace }}/mirror-results
-        run: node scripts/notify.js
+        run: node scripts/gitlab/notify.js
