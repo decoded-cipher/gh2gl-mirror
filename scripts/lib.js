@@ -17,11 +17,22 @@ export function errorText(err) {
   return redact(cause ? `${err.message} (${cause})` : err.message);
 }
 
+// GitLab.com caps bursts per user; withRetry waits these out instead of counting them as failures.
+const RATE_LIMITED = /\b429\b|rate limit exceeded/i;
+
+export function rateLimitError(message, seconds = 60) {
+  const err = new Error(message);
+  err.retryAfterMs = seconds * 1000;
+  return err;
+}
+
 export function git(args, { allowFail = false } = {}) {
   const res = spawnSync("git", args, { encoding: "utf8", maxBuffer: 1 << 26 });
   if (res.error) throw res.error;
   const out = redact(`${res.stdout || ""}${res.stderr || ""}`.trim());
-  if (res.status !== 0 && !allowFail) throw new Error(out || `git ${args[0]} exited ${res.status}`);
+  if (res.status !== 0 && !allowFail) {
+    throw RATE_LIMITED.test(out) ? rateLimitError(out) : new Error(out || `git ${args[0]} exited ${res.status}`);
+  }
   return { ok: res.status === 0, out };
 }
 
@@ -41,6 +52,7 @@ export function parseRefs(lsRemoteOutput) {
 // null means unreadable, never empty, so a failed lookup falls back to a full mirror.
 export function remoteRefs(url) {
   const { ok, out } = git(["ls-remote", url], { allowFail: true });
+  if (!ok && RATE_LIMITED.test(out)) throw rateLimitError(out);
   return ok ? parseRefs(out) : null;
 }
 
@@ -65,14 +77,17 @@ export function selectBatch(items, index, count) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function withRetry(fn, { attempts = 3, baseDelayMs = 1000, onRetry } = {}) {
+export async function withRetry(fn, { attempts = 3, baseDelayMs = 1000, rateLimitWaits = 8, onRetry } = {}) {
+  let failures = 0;
   for (let attempt = 1; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (attempt >= attempts) throw err;
+      const limited = err.retryAfterMs !== undefined && rateLimitWaits-- > 0;
+      if (!limited && ++failures >= attempts) throw err;
       onRetry?.(attempt, err);
-      await sleep(baseDelayMs * 2 ** (attempt - 1));
+      // Jitter so the parallel jobs don't all hit the next window together.
+      await sleep(limited ? err.retryAfterMs + Math.random() * 30_000 : baseDelayMs * 2 ** (failures - 1));
     }
   }
 }

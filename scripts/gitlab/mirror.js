@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  errorText, git, glSlug, pool, redact, registerSecrets, remoteRefs, sameRefs, selectBatch, withRetry,
+  errorText, git, glSlug, pool, rateLimitError, redact, registerSecrets, remoteRefs, sameRefs, selectBatch, withRetry,
 } from "../lib.js";
 
 const {
@@ -30,6 +30,13 @@ registerSecrets(GH_TOKEN, GITLAB_TOKEN);
 
 const GL_API = `https://${GITLAB_HOST}/api/v4`;
 
+// Project creation is capped per day, so only short Retry-After windows are worth waiting for.
+function glError(res, body) {
+  const message = `GitLab ${res.status} ${res.statusText}${body ? `: ${redact(body)}` : ""}`;
+  const retryAfter = Number(res.headers.get("retry-after")) || 60;
+  return res.status === 429 && retryAfter <= 300 ? rateLimitError(message, retryAfter) : new Error(message);
+}
+
 async function gl(path, { method = "GET", body, raw = false } = {}) {
   const res = await fetch(GL_API + path, {
     method,
@@ -37,7 +44,7 @@ async function gl(path, { method = "GET", body, raw = false } = {}) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (raw) return res;
-  if (!res.ok) throw new Error(`GitLab ${res.status} ${res.statusText}: ${redact(await res.text())}`);
+  if (!res.ok) throw glError(res, await res.text());
   return res.json();
 }
 
@@ -83,7 +90,7 @@ async function ensureProject(repo, log) {
     }
     return path;
   }
-  if (res.status !== 404) throw new Error(`GitLab ${res.status} ${res.statusText}`);
+  if (res.status !== 404) throw glError(res);
 
   await gl("/projects", {
     method: "POST",
