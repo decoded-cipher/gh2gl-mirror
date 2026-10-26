@@ -1,7 +1,7 @@
 # GitHub → GitLab + Tangled Mirror
 
-[![GH → GL Backup (staged, parallel)](https://github.com/decoded-cipher/gitlab-mirror/actions/workflows/gitlab.yml/badge.svg)](https://github.com/decoded-cipher/gitlab-mirror/actions/workflows/gitlab.yml)
-[![GH → Tangled Backup (staged, parallel)](https://github.com/decoded-cipher/gitlab-mirror/actions/workflows/tangled.yml/badge.svg)](https://github.com/decoded-cipher/gitlab-mirror/actions/workflows/tangled.yml)
+[![GH → GL Backup (staged, parallel)](https://github.com/decoded-cipher/gh2gl-mirror/actions/workflows/gitlab.yml/badge.svg)](https://github.com/decoded-cipher/gh2gl-mirror/actions/workflows/gitlab.yml)
+[![GH → Tangled Backup (staged, parallel)](https://github.com/decoded-cipher/gh2gl-mirror/actions/workflows/tangled.yml/badge.svg)](https://github.com/decoded-cipher/gh2gl-mirror/actions/workflows/tangled.yml)
 
 Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **[GitLab](https://gitlab.com)** and **[Tangled](https://tangled.org)**, with parallel jobs, retries, and Discord notifications.
 
@@ -10,9 +10,10 @@ Mirror **all repos you own on GitHub** (incl. archived; forks optional) to **[Gi
 - **Tangled**: every **public** repo (Tangled has no private repos)
 - Includes **forks** by default (see [Skip forks](#skip-forks) to exclude them)
 - Parallel mirroring in batched jobs (25 concurrent by default) with 3x retry and exponential backoff
+- Waits out GitLab.com rate limits (`429`) instead of failing repos
 - Skips the clone entirely when GitHub and the destination's refs already match
 - Keeps each repo's **description and website** in sync with GitHub
-- Discord webhook notifications with per-repo status breakdown
+- Discord webhook notifications with per-repo status breakdown; any failed repo fails the run
 - Zero per-repo config — run it from a single backup repo
 
 
@@ -53,7 +54,7 @@ scripts/
 
 | Secret | Purpose |
 |---|---|
-| `GITLAB_TOKEN` | GitLab Personal Access Token with **`api`** scope |
+| `GITLAB_TOKEN` | GitLab **legacy** Personal Access Token with **`api`** scope. A fine-grained token won't cover projects created later. GitLab caps expiry at one year — set a reminder to rotate it |
 | `GITLAB_HOST` | GitLab hostname, usually `gitlab.com` (or your self-hosted domain) |
 | `GITLAB_NAMESPACE` | Your GitLab **username** or **group path** where projects should live (e.g. `decoded-cipher`) |
 
@@ -70,7 +71,11 @@ scripts/
 | `TANGLED_KNOT` | Knot to create repos on — optional, defaults to `knot1.tangled.sh` (Tangled's hosted knot) |
 
 Generate the SSH key with `ssh-keygen -t ed25519 -N '' -C gh-mirror -f tangled_mirror`.
-Tangled has no UI for app passwords, but your PDS does. For a `tngl.sh` account:
+Deleting that key under Tangled *Settings → Keys* breaks every push; add a new one and update the secret.
+
+Tangled has no UI for app passwords, but your PDS does. Sign in at [bsky.app](https://bsky.app) — choosing
+**Custom** hosting provider for a self-hosted PDS — then *Settings → Privacy and security → App passwords*.
+Or, for a `tngl.sh` account:
 ```bash
 JWT=$(curl -s https://tngl.sh/xrpc/com.atproto.server.createSession \
   -H 'Content-Type: application/json' \
@@ -129,13 +134,14 @@ from the list and processes `CONCURRENCY` of them at a time via `scripts/<gitlab
    - **Tangled**: `git push --prune` of heads, tags and notes over SSH (a mirror push would also
      copy GitHub's `refs/pull/*`)
 4. Each repo gets **3 attempts** with exponential backoff, then a result file
-   (`updated` / `unchanged` / `failed`)
+   (`updated` / `unchanged` / `failed`). A `429` doesn't use up an attempt: the job waits out
+   `Retry-After` (or ~60s) plus jitter, up to 8 times. The job fails if any repo in its batch failed
 5. **Upload** — one result artifact per batch for the notify job
 
 ### Job 3 — `notify`
 - Downloads all batch result artifacts
 - Runs `scripts/<gitlab|tangled>/notify.js` to send a Discord embed with:
-  - Overall status (success / failure)
+  - Overall status — failure if any job or any repo failed
   - Updated, unchanged, and failed repo counts
   - Every updated and failed repo name, packed to fit Discord's embed limits
 
@@ -170,7 +176,9 @@ env:
   MAX_BATCHES: '25'     # batches discover.js splits the repo list into (discover job)
   CONCURRENCY: '3'      # repos mirrored simultaneously inside one batch job (backup / mirror job)
 ```
-Lower these if you hit rate limits; raise them for speed if your runner and network allow.
+GitLab.com's Free plan allows roughly 100 API and 100 Git-over-HTTPS requests per minute per user,
+so a full run is paced by rate-limit waits rather than these knobs. Raise them for speed if your
+runner and network allow.
 Total repos in flight is roughly `max-parallel × CONCURRENCY`.
 
 
