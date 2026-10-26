@@ -26,7 +26,6 @@ const runUrl = `${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_
 const allSucceeded = WORKFLOW_STATUS === "success";
 const backupStatus = BACKUP_RESULT || "unknown";
 const repoCount = parseInt(REPO_COUNT, 10) || 0;
-const color = allSucceeded ? 0x2ecc71 : 0xe74c3c;
 
 const discoverOk = WORKFLOW_STATUS === "success" || backupStatus !== "unknown";
 const backupOk = backupStatus === "success";
@@ -128,8 +127,9 @@ function repoListFields(label, repos, { charBudget, fieldBudget }) {
 (async () => {
   const { counts, names } = readMirrorResults();
   const hasResults = counts.updated + counts.unchanged + counts.failed > 0;
+  const ok = allSucceeded && counts.failed === 0;
 
-  const description = allSucceeded
+  const description = ok
     ? `Mirrored **${repoCount}** repositories from GitHub to GitLab.\nAll jobs completed successfully.\n\u200b`
     : `Mirror run completed with failures — **${repoCount}** repositories were processed.\n[View workflow logs](${runUrl}) for details.\n\u200b`;
 
@@ -154,9 +154,9 @@ function repoListFields(label, repos, { charBudget, fieldBudget }) {
   }
 
   const embed = {
-    title: allSucceeded ? "Mirror \u2014 Success" : "Mirror \u2014 Failed",
+    title: ok ? "Mirror \u2014 Success" : "Mirror \u2014 Failed",
     url: runUrl,
-    color,
+    color: ok ? 0x2ecc71 : 0xe74c3c,
     description,
     fields,
     footer: {

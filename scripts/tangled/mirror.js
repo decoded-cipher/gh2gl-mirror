@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  git, glSlug, pool, redact, registerSecrets, remoteRefs, sameRefs, selectBatch, withRetry,
+  errorText, git, glSlug, pool, redact, registerSecrets, remoteRefs, sameRefs, selectBatch, withRetry,
 } from "../lib.js";
 
 const {
@@ -233,13 +233,13 @@ async function handle(repo) {
 
   try {
     const tgUrl = await withRetry(() => ensureRepo(repo, log), {
-      onRetry: (n, err) => log(`ensure attempt ${n} failed: ${redact(err.message)}`),
+      onRetry: (n, err) => log(`ensure attempt ${n} failed: ${errorText(err)}`),
     });
     status = await withRetry(() => mirror(repo, tgUrl, log), {
-      onRetry: (n, err) => log(`mirror attempt ${n} failed: ${redact(err.message)}`),
+      onRetry: (n, err) => log(`mirror attempt ${n} failed: ${errorText(err)}`),
     });
   } catch (err) {
-    log(redact(err.message));
+    log(errorText(err));
   }
 
   writeResult(repo.name, status);
@@ -261,6 +261,7 @@ async function handle(repo) {
   });
 
   console.log(`Done — ${tally.updated} updated, ${tally.unchanged} unchanged, ${tally.failed} failed`);
+  if (tally.failed) process.exitCode = 1;
 })().catch((err) => {
   console.error(redact(err.message));
   process.exit(1);

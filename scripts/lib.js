@@ -11,6 +11,12 @@ export function redact(text) {
   return secrets.reduce((acc, value) => acc.split(value).join("***"), String(text ?? ""));
 }
 
+// Node's fetch reports every network error as "fetch failed"; the cause names the real one.
+export function errorText(err) {
+  const cause = err.cause?.code || err.cause?.message;
+  return redact(cause ? `${err.message} (${cause})` : err.message);
+}
+
 export function git(args, { allowFail = false } = {}) {
   const res = spawnSync("git", args, { encoding: "utf8", maxBuffer: 1 << 26 });
   if (res.error) throw res.error;

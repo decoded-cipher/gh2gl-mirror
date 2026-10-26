@@ -68,7 +68,7 @@ jobs:
         run: node scripts/tangled/mirror.js
       - name: Upload batch results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: tangled-results-${{ matrix.batch }}
           path: tangled-results/
@@ -86,7 +86,7 @@ jobs:
           fetch-depth: 1
           sparse-checkout: scripts
       - name: Download Tangled results
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           pattern: tangled-results-*
           path: tangled-results/
