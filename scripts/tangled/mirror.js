@@ -141,8 +141,8 @@ const session = lazy(async () => {
 
 async function ensureRepo(repo, log) {
   const rkey = tangledSlug(repo.name);
-  const url = `git@${SSH_HOST}:${TANGLED_HANDLE}/${rkey}`;
   const { did, pds } = await identity();
+  const url = `ssh://${did}@${SSH_HOST}/${TANGLED_HANDLE}/${rkey}`;
   const meta = recordMeta(repo);
 
   let existing;
