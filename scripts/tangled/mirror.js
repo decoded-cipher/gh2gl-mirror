@@ -1,5 +1,5 @@
 // Ensures Tangled repos exist and mirrors this job's slice of the public repo list into them.
-// The repo record lives on your PDS, the git data on a knot, and pushes go over SSH only.
+// The repo declaration lives on your PDS, the git data and manifest on a knot, and pushes go over SSH only.
 import { resolveTxt } from "node:dns/promises";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -31,9 +31,12 @@ for (const key of ["REPOS_JSON", "BATCH_INDEX", "BATCH_COUNT", "GH_USER", "GH_TO
 
 registerSecrets(GH_TOKEN, TANGLED_APP_PASSWORD);
 
-const REPO_NSID = "sh.tangled.repo";
+const DECLARATION_NSID = "org.tangled.repo.declaration";
+const MANIFEST_NSID = "org.tangled.repo.manifest";
+const ATTESTATION_NSID = "org.tangled.graph.attestation";
 const DEFAULT_KNOT = "knot1.tangled.sh";
 const KNOT = TANGLED_KNOT || DEFAULT_KNOT;
+const KNOT_URL = `https://${KNOT}`;
 const SSH_HOST = KNOT === DEFAULT_KNOT ? "tangled.org" : KNOT;
 
 // A GitHub mirror clone also carries refs/pull/*, which Tangled would keep.
@@ -42,7 +45,7 @@ const REFSPECS = ["+refs/heads/*:refs/heads/*", "+refs/tags/*:refs/tags/*", "+re
 // Tangled lowercases the record key and rejects "..".
 const tangledSlug = (name) => glSlug(name).replace(/\.{2,}/g, ".").toLowerCase();
 
-const DESCRIPTION_LIMIT = 140; // graphemes, per the sh.tangled.repo lexicon
+const DESCRIPTION_LIMIT = 140; // graphemes, per the org.tangled.repo.manifest lexicon
 const segmenter = new Intl.Segmenter();
 
 function clip(text, max) {
@@ -139,57 +142,80 @@ const session = lazy(async () => {
   return accessJwt;
 });
 
+async function serviceToken(aud, lxm) {
+  const { pds } = await identity();
+  const { token } = await xrpc(pds, "com.atproto.server.getServiceAuth", {
+    token: await session(),
+    query: { aud, lxm, exp: Math.floor(Date.now() / 1000) + 60 },
+  });
+  return token;
+}
+
+async function attest({ uri, cid, "x-tngl-change": change }) {
+  const { did, pds } = await identity();
+  await xrpc(pds, "com.atproto.repo.createRecord", {
+    token: await session(),
+    body: {
+      repo: did,
+      collection: ATTESTATION_NSID,
+      record: { $type: ATTESTATION_NSID, subject: { uri, cid }, ...(change && { change }), createdAt: new Date().toISOString() },
+    },
+  });
+}
+
 async function ensureRepo(repo, log) {
   const rkey = tangledSlug(repo.name);
   const { did, pds } = await identity();
   const url = `ssh://${did}@${SSH_HOST}/${TANGLED_HANDLE}/${rkey}`;
   const meta = recordMeta(repo);
 
-  let existing;
+  let declaration;
   try {
-    existing = await xrpc(pds, "com.atproto.repo.getRecord", { query: { repo: did, collection: REPO_NSID, rkey } });
+    declaration = await xrpc(pds, "com.atproto.repo.getRecord", { query: { repo: did, collection: DECLARATION_NSID, rkey } });
   } catch (err) {
     if (err.code !== "RecordNotFound") throw err;
   }
 
-  if (existing) {
-    const changed = changedKeys(existing.value, meta);
+  if (declaration) {
+    const repoDid = declaration.value.repo;
+    const manifest = await xrpc(KNOT_URL, "com.atproto.repo.getRecord", {
+      query: { repo: repoDid, collection: MANIFEST_NSID, rkey: "self" },
+    });
+    const changed = changedKeys(manifest.value, meta);
     if (changed.length) {
-      // Merged onto the stored record so fields set elsewhere (labels, spindle, ...) survive.
-      await xrpc(pds, "com.atproto.repo.putRecord", {
-        token: await session(),
+      // Merged onto the stored manifest so fields set elsewhere (spindle, topics, ...) survive.
+      const { "x-tngl-editor": _, defaultBranch: __, ...stored } = manifest.value;
+      const written = await xrpc(KNOT_URL, "com.atproto.repo.putRecord", {
+        token: await serviceToken(repoDid, "com.atproto.repo.putRecord"),
         body: {
-          repo: did,
-          collection: REPO_NSID,
-          rkey,
-          record: { ...existing.value, ...meta },
-          swapRecord: existing.cid,
+          repo: repoDid,
+          collection: MANIFEST_NSID,
+          rkey: "self",
+          record: { ...stored, ...meta },
+          swapRecord: manifest.cid,
         },
       });
+      await attest(written);
       log(`updated ${changed.join(", ")}`);
     }
     return url;
   }
 
-  const accessJwt = await session();
-  const { token } = await xrpc(pds, "com.atproto.server.getServiceAuth", {
-    token: accessJwt,
-    query: { aud: `did:web:${KNOT}`, lxm: "sh.tangled.repo.create", exp: Math.floor(Date.now() / 1000) + 60 },
-  });
-  // Idempotent per name on the knot, so a retry after a failed record write reuses the same repo.
-  const { repoDid } = await xrpc(`https://${KNOT}`, "sh.tangled.repo.create", {
-    token,
-    body: { rkey, name: rkey, defaultBranch: repo.branch || "main" },
+  // Not idempotent: a retry after a failed declaration write gets a conflict for this name.
+  const createdAt = new Date().toISOString();
+  const { did: repoDid } = await xrpc(KNOT_URL, "org.tangled.repo.createRepo", {
+    token: await serviceToken(`did:web:${KNOT}`, "org.tangled.repo.createRepo"),
+    body: { name: rkey, defaultBranch: repo.branch || "main", createdAt, ...meta },
   });
   if (!repoDid) throw new Error(`knot ${KNOT} returned no repo DID`);
 
   await xrpc(pds, "com.atproto.repo.createRecord", {
-    token: accessJwt,
+    token: await session(),
     body: {
       repo: did,
-      collection: REPO_NSID,
+      collection: DECLARATION_NSID,
       rkey,
-      record: { $type: REPO_NSID, knot: KNOT, repoDid, createdAt: new Date().toISOString(), ...meta },
+      record: { $type: DECLARATION_NSID, repo: repoDid, createdAt },
     },
   });
   log("created repo");

@@ -63,7 +63,7 @@ scripts/
 | Secret | Purpose |
 |---|---|
 | `TANGLED_SSH_KEY` | Private half of an SSH key whose public half is added under Tangled *Settings → Keys* (Tangled pushes are SSH only) |
-| `TANGLED_APP_PASSWORD` | App password for your Tangled account, used only when a repo needs creating |
+| `TANGLED_APP_PASSWORD` | App password for your Tangled account, used only when a repo needs creating or updating |
 
 | Variable | Purpose |
 |---|---|
@@ -124,9 +124,10 @@ from the list and processes `CONCURRENCY` of them at a time via `scripts/<gitlab
    - **GitLab**: resolves your **namespace** once per job, creates the project, and sets visibility
      to `private` only when it isn't already. GitLab has no website field, so the GitHub homepage is
      appended to the description (`description · https://…`)
-   - **Tangled**: checks your PDS for the `sh.tangled.repo` record; if missing, creates the repo on
-     the knot and writes the record, otherwise updates it in place. Descriptions over Tangled's
-     140-character limit are trimmed with `…`. Runs where nothing changed never log in
+   - **Tangled**: checks your PDS for the `org.tangled.repo.declaration` record; if missing, creates
+     the repo on the knot and writes the declaration, otherwise updates the repo's manifest on the
+     knot and attests the change on your PDS. Descriptions over Tangled's 140-character limit are
+     trimmed with `…`. Runs where nothing changed never log in
 2. **Compare** — `git ls-remote` on both sides; when `refs/heads`, `refs/tags` and `refs/notes`
    already match, the clone is skipped and the repo is recorded as `unchanged`
 3. **Mirror** — otherwise `git clone --mirror` from GitHub, then
